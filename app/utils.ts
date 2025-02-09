@@ -57,3 +57,11 @@ export const exampleTracks: Track[] = [
         name: 'Track 5'
     }
 ];
+
+export const COLORS = {
+    softRed: '#FF6F61',
+    softGreen: '#6B8E23',
+    softTurquoise: '#3CB371',
+    lightDijon: '#FFD700',
+    lavender: '#9370DB'
+}

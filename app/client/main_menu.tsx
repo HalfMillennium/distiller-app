@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { IconInfoCircle, IconMessage, IconPhoneCall, IconSettings } from '@tabler/icons-react';
 import { ActionIcon, Burger, Button, Drawer, Flex, Text, Tooltip } from '@mantine/core';
+import { ThemeToggler } from './components/theme_toggler';
 
 const ClientMainMenu: React.FC = () => {
   const [opened, setOpened] = useState(false);
@@ -11,11 +12,12 @@ const ClientMainMenu: React.FC = () => {
     <>
       {!showBurger && (
         <Flex align="center" gap="15">
+          <ThemeToggler />
           <ActionIcon radius={100} variant="filled" color="black" size="lg">
             <IconInfoCircle size={20} />
           </ActionIcon>
 
-          <ActionIcon radius={100}  variant="filled" color="black" size="lg">
+          <ActionIcon radius={100} variant="filled" color="black" size="lg">
             <IconPhoneCall size={20} />
           </ActionIcon>
           <ActionIcon radius={100} variant="filled" color="black" size="lg">
@@ -24,7 +26,7 @@ const ClientMainMenu: React.FC = () => {
         </Flex>
       )}
       {showBurger && (
-        <div>
+        <Flex direction="column" align="center" gap="15">ß
           <Burger opened={opened} onClick={() => setOpened((o) => !o)} size="sm" />
           <Drawer
             opened={opened}
@@ -48,7 +50,7 @@ const ClientMainMenu: React.FC = () => {
               </Flex>
             </Flex>
           </Drawer>
-        </div>
+        </Flex>
       )}
     </>
   );

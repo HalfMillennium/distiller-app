@@ -1,0 +1,10 @@
+/* app/globals.css */
+body {
+    /* If using the CSS variable defined in layout.js */
+    font-family: var(--font-space-mono), sans-serif;
+  
+    /* OR, directly specify the font name (Inter in this case)
+    font-family: 'Inter', sans-serif;
+    */
+  }
+  
