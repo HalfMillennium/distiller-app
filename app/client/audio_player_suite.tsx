@@ -2,15 +2,20 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  IconArrowDown,
+  IconArrowUp,
   IconGripVertical,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconSlash,
   IconUpload,
 } from '@tabler/icons-react';
+import { useDispatch, useSelector } from 'react-redux';
 import { ActionIcon, Button, Card, Flex, Group, Slider, Stack, Text } from '@mantine/core';
 import { Dropzone, FileWithPath } from '@mantine/dropzone';
 import { Track } from '../types';
+import { AppDispatch, RootState } from './store/store';
+import { addTracks, setCurrentTrackId, setTracks } from './store/tracks/tracksSlice';
 
 interface WaveformProps {
   audioRef: React.RefObject<HTMLAudioElement | null>;
@@ -36,6 +41,10 @@ const Waveform: React.FC<WaveformProps> = ({
   const animationFrameId = useRef<number | null>(null);
   const waveformDataRef = useRef<number[]>([]);
 
+  // Audio player refs
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+
   // Generate waveform data once on mount
   useEffect(() => {
     if (!waveformDataRef.current.length) {
@@ -51,30 +60,43 @@ const Waveform: React.FC<WaveformProps> = ({
   useEffect(() => {
     if (!audioRef.current) return;
 
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const AudioContextConstructor = window.AudioContext || (window as any).webkitAudioContext;
+    let audioContext = audioContextRef.current;
+    if (!audioContext) {
+      audioContext = new AudioContextConstructor();
+      audioContextRef.current = audioContext;
+    }
+
     const newAnalyser = audioContext.createAnalyser();
-    console.log('audioContext state:', audioContext.state);
+    newAnalyser.fftSize = 256;
 
     let source: MediaElementAudioSourceNode;
     try {
-      source = audioContext.createMediaElementSource(audioRef.current);
-    } catch (e) {
-      console.warn('MediaElementSource already exists, reusing the existing one.');
-      source = audioContext.createMediaElementSource(audioRef.current);
-    }
-
-    source.connect(newAnalyser);
-    newAnalyser.connect(audioContext.destination);
-
-    newAnalyser.fftSize = 256;
-    setAnalyser(newAnalyser);
-
-    return () => {
-      audioContext.close();
-      if (animationFrameId.current) {
-        cancelAnimationFrame(animationFrameId.current);
+      if (sourceRef.current) {
+        source = sourceRef.current;
+      } else {
+        source = audioContext.createMediaElementSource(audioRef.current);
+        sourceRef.current = source;
       }
-    };
+
+      source.connect(newAnalyser);
+      newAnalyser.connect(audioContext.destination);
+      newAnalyser.fftSize = 256;
+
+      setAnalyser(newAnalyser);
+
+      return () => {
+        if (!sourceRef.current) {
+          source.disconnect();
+        }
+        if (animationFrameId.current) {
+          cancelAnimationFrame(animationFrameId.current);
+        }
+      };
+    } catch (e) {
+      console.error('Error setting up audio context:', e);
+      return;
+    }
   }, [audioRef]);
 
   useEffect(() => {
@@ -149,43 +171,37 @@ const Waveform: React.FC<WaveformProps> = ({
 };
 
 interface AudioPlayerSuiteProps {
-  // You can pass in initial tracks if desired; otherwise, start empty.
   initialTracks?: Track[];
 }
 
 export const AudioPlayerSuite = ({ initialTracks = [] }: AudioPlayerSuiteProps) => {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [tracks, setTracks] = useState<Track[]>(initialTracks);
-  const [currentTrackIndex, setCurrentTrackIndex] = useState<number | null>(null);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const tracks = useSelector((state: RootState) => state.tracks.tracks);
+  const currentTrackIndex = useSelector((state: RootState) => state.tracks.currentTrackId);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [draggedTrack, setDraggedTrack] = useState<number | null>(null);
+  const [dragTarget, setDragTarget] = useState<number | null>(null);
   const [trackEndTimes, setTrackEndTimes] = useState<{ [key: string]: number }>({});
-
-  const [files, setFiles] = useState<FileWithPath[]>([]); 
+  const dispatch = useDispatch<AppDispatch>();
+  const [files, setFiles] = useState<FileWithPath[]>([]);
   const [isMounted, setIsMounted] = useState(false);
+  const [canPlay, setCanPlay] = useState(false);
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
-  // --- File Upload Handler ---
+
   useEffect(() => {
     if (files.length === 0 || !isMounted) return;
-    setTracks((prevTracks) => {
-      const newTracks: Track[] = files.map((file) => ({
-        id: Math.random().toString(36).slice(2, 9),
-        name: file.name,
-        src: URL.createObjectURL(file),
-        color: getRandomPastelColor(),
-      }));
-      const updatedTracks = [...prevTracks, ...newTracks];
-      // If no track is currently selected, set the first uploaded track as current.
-      if (prevTracks.length === 0 && newTracks.length > 0) {
-        setCurrentTrackIndex(0);
-      }
-      return updatedTracks;
-    });
+    const newTracks: Track[] = files.map((file, i) => ({
+      id: i,
+      name: file.name,
+      src: URL.createObjectURL(file),
+      color: getRandomPastelColor(),
+    }));
+    dispatch(addTracks({ tracks: newTracks }));
   }, [files]);
 
   const getRandomPastelColor = () => {
@@ -193,9 +209,13 @@ export const AudioPlayerSuite = ({ initialTracks = [] }: AudioPlayerSuiteProps) 
     return `hsl(${hue}, 70%, 90%)`;
   };
 
-  // --- Audio Element Handling ---
   useEffect(() => {
-    if (audioRef.current && currentTrackIndex !== null && tracks[currentTrackIndex]) {
+    if (
+      audioRef.current &&
+      currentTrackIndex !== null &&
+      currentTrackIndex &&
+      tracks[currentTrackIndex]
+    ) {
       audioRef.current.src = tracks[currentTrackIndex].src;
       audioRef.current.load();
       setCurrentTime(0);
@@ -211,7 +231,7 @@ export const AudioPlayerSuite = ({ initialTracks = [] }: AudioPlayerSuiteProps) 
 
     const handleLoadedMetadata = () => {
       setDuration(audio.duration);
-      if (currentTrackIndex !== null && !trackEndTimes[tracks[currentTrackIndex].id]) {
+      if (currentTrackIndex && !trackEndTimes[tracks[currentTrackIndex].id]) {
         setTrackEndTimes((prev) => ({
           ...prev,
           [tracks[currentTrackIndex].id]: audio.duration,
@@ -222,6 +242,7 @@ export const AudioPlayerSuite = ({ initialTracks = [] }: AudioPlayerSuiteProps) 
     const handleTimeUpdate = () => {
       if (
         currentTrackIndex !== null &&
+        currentTrackIndex &&
         audio.currentTime >= trackEndTimes[tracks[currentTrackIndex].id]
       ) {
         audio.pause();
@@ -271,34 +292,58 @@ export const AudioPlayerSuite = ({ initialTracks = [] }: AudioPlayerSuiteProps) 
     return `${minutes < 10 ? '0' + minutes : minutes}:${seconds < 10 ? '0' + seconds : seconds}`;
   };
 
-  // --- Drag and Drop Handlers ---
   const handleDragStart = (e: React.DragEvent<HTMLDivElement>, index: number) => {
     setDraggedTrack(index);
     e.currentTarget.style.opacity = '0.5';
   };
 
+  useEffect(() => {
+    if (currentTrackIndex && draggedTrack) {
+      let newCurrentIndex: number = currentTrackIndex;
+      if (dragTarget && currentTrackIndex === draggedTrack) {
+        newCurrentIndex = dragTarget;
+      } else if (
+        dragTarget &&
+        currentTrackIndex > draggedTrack &&
+        currentTrackIndex <= dragTarget
+      ) {
+        newCurrentIndex--;
+      } else if (
+        dragTarget &&
+        currentTrackIndex < draggedTrack &&
+        currentTrackIndex >= dragTarget
+      ) {
+        newCurrentIndex++;
+      }
+      dispatch(setCurrentTrackId({ id: newCurrentIndex }));
+    }
+  }, [tracks]);
+
   const handleDragEnd = (e: React.DragEvent<HTMLDivElement>) => {
     e.currentTarget.style.opacity = '1';
+
+    if (draggedTrack !== null && dragTarget !== null && draggedTrack !== dragTarget) {
+      const newTracks = [...tracks];
+      const [draggedItem] = newTracks.splice(draggedTrack, 1);
+      newTracks.splice(dragTarget, 0, draggedItem);
+
+      // Update track IDs to ensure uniqueness
+      const updatedTracks = newTracks.map((track, index) => ({
+        ...track,
+        id: index, // Reassign IDs based on new position
+      }));
+
+      dispatch(setTracks({ tracks: updatedTracks }));
+    }
+
     setDraggedTrack(null);
+    setDragTarget(null);
   };
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>, index: number) => {
     e.preventDefault();
     if (draggedTrack === null || draggedTrack === index) return;
-
-    const newTracks = [...tracks];
-    const draggedItem = newTracks[draggedTrack];
-    newTracks.splice(draggedTrack, 1);
-    newTracks.splice(index, 0, draggedItem);
-
-    setTracks(newTracks);
-    setDraggedTrack(index);
-
-    if (currentTrackIndex === draggedTrack) {
-      setCurrentTrackIndex(index);
-    } else if (currentTrackIndex === index) {
-      setCurrentTrackIndex(draggedTrack);
-    }
+    setDragTarget(index);
   };
 
   const togglePlayPause = () => {
@@ -318,104 +363,145 @@ export const AudioPlayerSuite = ({ initialTracks = [] }: AudioPlayerSuiteProps) 
           </Button>
         </Dropzone>
       </Flex>
-
-      {/* Player Tracks */}
-      <Stack bg="#00000010" w="100%" gap="xl" style={{ borderRadius: 10 }}>
-        {tracks.map((track: Track, index: number) => (
-          <Card
-            key={track.id || index}
-            p="md"
-            withBorder
-            radius={3}
-            draggable
-            onDragStart={(e) => handleDragStart(e, index)}
-            onDragEnd={handleDragEnd}
-            onDragOver={(e) => handleDragOver(e, index)}
-            style={{
-              marginBottom: 10,
-              backgroundColor: track.color,
-              cursor: 'move',
-            }}
-          >
-            <Stack gap="sm">
-              <Group p="apart" gap="xl">
-                <Group gap="md">
-                  <ActionIcon variant="subtle">
-                    <IconGripVertical color="gray" size={20} />
-                  </ActionIcon>
-                  <ActionIcon
-                    variant="subtle"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (currentTrackIndex === index) {
-                        togglePlayPause();
-                      } else {
-                        setIsPlaying(false);
-                        setCurrentTrackIndex(index);
-                        setIsPlaying(true);
-                      }
-                    }}
-                  >
-                    {currentTrackIndex === index && isPlaying ? (
-                      <IconPlayerPauseFilled color="gray" size={16} />
-                    ) : (
-                      <IconPlayerPlayFilled color="gray" size={16} />
-                    )}
-                  </ActionIcon>
-                  <Text fw={799} c="white">
-                    {track.name}
-                  </Text>
-                </Group>
-                <Flex flex="1" align="center" justify="end">
-                  <Flex align="center" gap="sm">
-                    <Text size="sm" c="white">
-                      {currentTrackIndex === index ? formatTime(currentTime) : '00:00'}
+      <Stack style={{ width: '100%', overflowY: 'auto', maxHeight: 600, scrollbarWidth: 'none' }}>
+        <Stack w="100%" gap="md" style={{ borderRadius: 10 }}>
+          {tracks.map((track: Track, index: number) => (
+            <Card
+              key={index}
+              p="md"
+              withBorder
+              radius={3}
+              draggable
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragEnd={handleDragEnd}
+              onDragOver={(e) => handleDragOver(e, index)}
+              style={{
+                marginBottom: 10,
+                backgroundColor: track.color,
+                cursor: 'move',
+                opacity: draggedTrack === index ? 0.5 : 1,
+              }}
+            >
+              <Stack gap="sm">
+                <Group p="apart" gap="xl">
+                  <Group gap="md">
+                    <ActionIcon variant="subtle">
+                      <IconGripVertical color="gray" size={20} />
+                    </ActionIcon>
+                    <ActionIcon
+                      variant="subtle"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (currentTrackIndex === index) {
+                          togglePlayPause();
+                        } else {
+                          dispatch(setCurrentTrackId({ id: index }));
+                          setIsPlaying(true);
+                        }
+                      }}
+                    >
+                      {currentTrackIndex === index && isPlaying ? (
+                        <IconPlayerPauseFilled color="gray" size={16} />
+                      ) : (
+                        <IconPlayerPlayFilled color="gray" size={16} />
+                      )}
+                    </ActionIcon>
+                    <Text
+                      fw={799}
+                      style={{ color: 'white', filter: 'invert(1) grayscale(1)' }}
+                    >
+                      {track.name}
                     </Text>
-                    <IconSlash size={10} color="white" />
-                    <Text size="sm" c="white">
-                      {formatTime(trackEndTimes[track.id] || duration)}
-                    </Text>
+                  </Group>
+                  <Flex flex="1" align="center" justify="end">
+                    <Flex align="center" gap="sm">
+                      <Text size="sm" c="white">
+                        {currentTrackIndex === index ? formatTime(currentTime) : '00:00'}
+                      </Text>
+                      <IconSlash size={10} color="white" />
+                      <Text size="sm" c="white">
+                        {formatTime(trackEndTimes[track.id] || duration)}
+                      </Text>
+                    </Flex>
                   </Flex>
-                </Flex>
-              </Group>
+                </Group>
 
-              {currentTrackIndex === index && (
-                <Waveform
-                  audioRef={audioRef}
-                  currentTime={currentTime}
-                  duration={duration}
-                  isPlaying={isPlaying}
-                  color="white"
-                  height={60}
-                  onSeek={handleSeek}
-                />
-              )}
-              {currentTrackIndex === index && (
-                <Slider
-                  min={0}
-                  max={duration}
-                  value={trackEndTimes[track.id] || duration}
-                  onChange={(value) => {
-                    setTrackEndTimes((prev) => ({
-                      ...prev,
-                      [track.id]: value,
-                    }));
-                  }}
-                  label={formatTime}
-                  size="sm"
-                  color="blue"
-                  styles={{
-                    track: { backgroundColor: 'rgba(255, 255, 255, 0.3)' },
-                    thumb: { borderColor: 'white' },
-                    bar: { backgroundColor: 'white' },
-                  }}
-                />
-              )}
-            </Stack>
-          </Card>
-        ))}
-        <audio ref={audioRef} style={{ display: 'none' }} />
+                {currentTrackIndex === index && (
+                  <Waveform
+                    audioRef={audioRef}
+                    currentTime={currentTime}
+                    duration={duration}
+                    isPlaying={isPlaying}
+                    color="white"
+                    height={60}
+                    onSeek={handleSeek}
+                  />
+                )}
+                {currentTrackIndex === index && (
+                  <Slider
+                    min={0}
+                    max={duration}
+                    value={trackEndTimes[track.id] || duration}
+                    onChange={(value) => {
+                      setTrackEndTimes((prev) => ({
+                        ...prev,
+                        [track.id]: value,
+                      }));
+                    }}
+                    label={formatTime}
+                    size="sm"
+                    color="blue"
+                    styles={{
+                      track: { backgroundColor: 'rgba(255, 255, 255, 0.3)' },
+                      thumb: { borderColor: 'white' },
+                      bar: { backgroundColor: 'white' },
+                    }}
+                  />
+                )}
+              </Stack>
+            </Card>
+          ))}
+          <audio ref={audioRef} style={{ display: 'none' }} />
+        </Stack>
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 10,
+            right: 10,
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+          }}
+        >
+          <IconArrowUp size={24} color="gray" style={{ display: 'none' }} id="scroll-up-icon" />
+          <IconArrowDown size={24} color="gray" style={{ display: 'none' }} id="scroll-down-icon" />
+        </div>
       </Stack>
+
+      <script>
+        {`
+        const container = document.querySelector('[style*="overflow-y: auto"]');
+        const upIcon = document.getElementById('scroll-up-icon');
+        const downIcon = document.getElementById('scroll-down-icon');
+
+        container.addEventListener('scroll', () => {
+        const midpoint = container.scrollHeight / 2;
+        const scrollTop = container.scrollTop;
+        const scrollBottom = container.scrollHeight - container.clientHeight - scrollTop;
+
+        if (scrollTop > midpoint) {
+          upIcon.style.display = 'block';
+          downIcon.style.display = 'none';
+        } else if (scrollBottom > midpoint) {
+          upIcon.style.display = 'none';
+          downIcon.style.display = 'block';
+        } else {
+          upIcon.style.display = 'none';
+          downIcon.style.display = 'none';
+        }
+        });
+      `}
+      </script>
     </Stack>
   );
 };

@@ -16,7 +16,6 @@ const ClientMainMenu: React.FC = () => {
           <ActionIcon radius={100} variant="filled" color="black" size="lg">
             <IconInfoCircle size={20} />
           </ActionIcon>
-
           <ActionIcon radius={100} variant="filled" color="black" size="lg">
             <IconPhoneCall size={20} />
           </ActionIcon>
@@ -26,7 +25,7 @@ const ClientMainMenu: React.FC = () => {
         </Flex>
       )}
       {showBurger && (
-        <Flex direction="column" align="center" gap="15">ß
+        <Flex direction="column" align="center" gap="15">
           <Burger opened={opened} onClick={() => setOpened((o) => !o)} size="sm" />
           <Drawer
             opened={opened}
